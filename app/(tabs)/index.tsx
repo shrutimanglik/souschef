@@ -1,98 +1,105 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useCallback, useMemo } from 'react';
+import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { CookbookCover } from '@/components/cookbook-cover';
+import { NewCookbookCover } from '@/components/new-cookbook-cover';
+import { type Cookbook } from '@/constants/cookbooks';
+import { Colors, Fonts } from '@/constants/theme';
+import { useCookbookLibrary } from '@/contexts/cookbook-library';
 
-export default function HomeScreen() {
+// The trailing "new cookbook" tile lives in the same grid as real cookbooks,
+// so the list needs a lightweight discriminated shape rather than two
+// separately-rendered lists (which would break the two-column wrapping).
+type LibraryItem = { kind: 'cookbook'; cookbook: Cookbook } | { kind: 'new' };
+
+export default function CookbookLibraryScreen() {
+  const colors = Colors.light;
+  const router = useRouter();
+  const { cookbooks, allRecipesCookbook } = useCookbookLibrary();
+
+  const libraryData = useMemo<LibraryItem[]>(
+    () => [
+      ...cookbooks.map((cookbook): LibraryItem => ({ kind: 'cookbook', cookbook })),
+      { kind: 'cookbook', cookbook: allRecipesCookbook },
+      { kind: 'new' },
+    ],
+    [cookbooks, allRecipesCookbook]
+  );
+
+  const handleOpenCookbook = useCallback(
+    (cookbook: Cookbook) => {
+      router.push({ pathname: '/cookbook/[id]', params: { id: cookbook.id } });
+    },
+    [router]
+  );
+
+  const handleCreateCookbook = useCallback(() => {
+    // Creating a cookbook is a future milestone; this is the visual
+    // affordance for it, matching the restrained "coming soon" treatment
+    // used elsewhere in the app.
+    Alert.alert('New Cookbook', 'Creating cookbooks is coming soon.');
+  }, []);
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+      <FlatList
+        data={libraryData}
+        keyExtractor={(item) => (item.kind === 'cookbook' ? item.cookbook.id : 'new')}
+        numColumns={2}
+        columnWrapperStyle={styles.row}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={[styles.eyebrow, { color: colors.textMuted }]}>SousChef</Text>
+            <Text style={[styles.title, { color: colors.text }]}>Your cookbooks</Text>
+          </View>
+        }
+        renderItem={({ item }) =>
+          item.kind === 'cookbook' ? (
+            <CookbookCover
+              cookbook={item.cookbook}
+              style={styles.tile}
+              onPress={handleOpenCookbook}
             />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
-
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+          ) : (
+            <NewCookbookCover style={styles.tile} onPress={handleCreateCookbook} />
+          )
+        }
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  safeArea: {
+    flex: 1,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 32,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  header: {
+    paddingTop: 12,
+    paddingBottom: 28,
+    gap: 4,
+  },
+  eyebrow: {
+    fontSize: 13,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  title: {
+    fontFamily: Fonts.serif,
+    fontSize: 34,
+    lineHeight: 40,
+  },
+  row: {
+    gap: 16,
+    marginBottom: 16,
+  },
+  tile: {
+    flexBasis: '47%',
   },
 });

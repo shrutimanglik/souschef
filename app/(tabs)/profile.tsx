@@ -3,16 +3,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Fonts } from '@/constants/theme';
 
-export default function DiscoverScreen() {
+export default function ProfileScreen() {
   const colors = Colors.light;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <View style={styles.content}>
-        <Text style={[styles.eyebrow, { color: colors.textMuted }]}>Discover</Text>
-        <Text style={[styles.title, { color: colors.text }]}>Coming soon</Text>
+        <Text style={[styles.eyebrow, { color: colors.textMuted }]}>Profile</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Your details</Text>
         <Text style={[styles.body, { color: colors.textMuted }]}>
-          A calm way to find new recipes worth cooking is on its way.
+          Account and preferences will live here.
         </Text>
       </View>
     </SafeAreaView>

@@ -1,50 +1,66 @@
-# Welcome to your Expo app 👋
+# SousChef
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+SousChef is a mobile-first personal cookbook app. The idea: the internet is
+where you *discover* recipes, SousChef is where you actually *cook* them —
+paste a link from any recipe site and get a clean, structured, editable
+recipe saved into your own cookbooks.
 
-## Get started
+This is an early-stage build. It's a working local-first prototype, not a
+finished product — see "What currently works" below for the honest state of
+things.
 
-1. Install dependencies
+## Tech stack
 
-   ```bash
-   npm install
-   ```
+- [Expo](https://expo.dev) (SDK 54) + [Expo Router](https://docs.expo.dev/router/introduction/) — file-based routing, including a server-side API route
+- React Native + TypeScript
+- `@react-native-async-storage/async-storage` — local, on-device persistence (no backend database)
+- No authentication, no cloud sync, no AI
 
-2. Start the app
+## What currently works
 
-   ```bash
-   npx expo start
-   ```
+- **Cookbook Library** — a home screen showing your cookbooks (three seeded ones — Everyday Cooking, Baking, Dinner Parties — plus a system-generated "All Recipes" collection). Creating a new cookbook is not implemented yet (the "+ New Cookbook" card is a placeholder).
+- **Cookbook detail** and **Recipe detail** screens, including deleting a saved recipe.
+- **Add Recipe by URL**: paste a link → SousChef fetches the page and extracts a recipe → an **editable** review screen lets you correct the title, servings, times, ingredients, or instructions before saving → choose a cookbook (or save straight into the one you started from) → the recipe is saved, deduplicated by source URL if you'd already saved it elsewhere.
+- Recipes and cookbooks persist locally via AsyncStorage and survive an app restart.
+- Bottom navigation: **Cookbooks**, **+ Add Recipe**, **Discover** (placeholder — "coming soon"), **Profile** (placeholder).
 
-In the output, you'll find options to open the app in a
+Not implemented yet: creating new cookbooks, manual recipe entry, AI of any kind, recipe scaling/unit conversion, image downloading (an image URL is captured but not rendered), authentication, and cloud sync.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Install & run
 
 ```bash
-npm run reset-project
+npm install
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Open the result in Expo Go, an iOS/Android simulator, or a development
+build. The app is designed for an iPhone-sized screen.
 
-## Learn more
+The Add Recipe flow depends on a server-side API route (`app/api/extract-recipe+api.ts`), which requires `web.output: "server"` in `app.json` — already configured. When running via `npx expo start`, this route is served automatically alongside the app.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Recipe extraction
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Pasting a URL doesn't call an AI — extraction is **deterministic** and
+**domain-agnostic**:
 
-## Join the community
+1. The target page's HTML is fetched server-side.
+2. SousChef looks for [Schema.org `Recipe`](https://schema.org/Recipe) data published as JSON-LD (`<script type="application/ld+json">`), which is how most recipe sites make their recipe data available to search engines — including recipes nested in `@graph`, arrays, or a page's `mainEntity`.
+3. Whatever's found is normalized into SousChef's own recipe model (ingredient quantity/unit/name kept separate, durations converted to minutes, etc.).
+4. If a page has no such data, or what's found is missing ingredients or instructions, extraction fails with a specific, honest error — SousChef never guesses or fabricates recipe content.
 
-Join our community of developers creating universal apps.
+There's **no list of "supported" websites** — any public page with valid
+Schema.org Recipe markup should work. Sites that don't publish this markup
+(or block automated requests) currently fail to import; there's no AI or
+scraping fallback for those cases yet.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Testing extraction against real sites
+
+A small corpus of real, diverse recipe URLs is used to spot-check the
+extractor (not an automated test suite — it makes live network requests):
+
+```bash
+npm run test:extraction
+```
+
+This reports, per URL, whether extraction succeeded, what was extracted,
+and any warnings (e.g. an ingredient line with no parseable quantity).
