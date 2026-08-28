@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { CookbookLibraryProvider } from '@/contexts/cookbook-library';
+import { RecipeConversationsProvider } from '@/contexts/recipe-conversations';
 import { Colors, Fonts } from '@/constants/theme';
 
 export const unstable_settings = {
@@ -31,16 +32,18 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={NAVIGATION_THEME}>
       <CookbookLibraryProvider>
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: Colors.light.background },
-            headerTintColor: Colors.light.text,
-            headerTitleStyle: { fontFamily: Fonts.serif, fontSize: 17 },
-            headerShadowVisible: false,
-            contentStyle: { backgroundColor: Colors.light.background },
-          }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        </Stack>
+        <RecipeConversationsProvider>
+          <Stack
+            screenOptions={{
+              headerStyle: { backgroundColor: Colors.light.background },
+              headerTintColor: Colors.light.text,
+              headerTitleStyle: { fontFamily: Fonts.serif, fontSize: 17 },
+              headerShadowVisible: false,
+              contentStyle: { backgroundColor: Colors.light.background },
+            }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          </Stack>
+        </RecipeConversationsProvider>
       </CookbookLibraryProvider>
       <StatusBar style="dark" />
     </ThemeProvider>

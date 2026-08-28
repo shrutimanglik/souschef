@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { Colors, Fonts } from '@/constants/theme';
 
 type ListRowProps = {
@@ -12,6 +12,8 @@ type ListRowProps = {
    * treatment used elsewhere in the app for a recipe count, e.g. "0 recipes".
    */
   subtitleVariant?: 'caption' | 'label';
+  /** Optional leading icon, tinted with the app's accent color — omit for the plain text-only row every existing call site uses today. */
+  icon?: IconSymbolName;
   onPress?: () => void;
   showChevron?: boolean;
   showDivider?: boolean;
@@ -29,6 +31,7 @@ export function ListRow({
   title,
   subtitle,
   subtitleVariant = 'caption',
+  icon,
   onPress,
   showChevron = true,
   showDivider = true,
@@ -48,6 +51,7 @@ export function ListRow({
         pressed && styles.pressed,
         style,
       ]}>
+      {icon ? <IconSymbol name={icon} size={20} color={colors.tint} /> : null}
       <View style={styles.text}>
         <Text
           style={[styles.title, { color: muted ? colors.textMuted : colors.text, fontFamily: Fonts.serif }]}>

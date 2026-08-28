@@ -1,4 +1,5 @@
 import type { Href } from 'expo-router';
+import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ExternalLink } from '@/components/external-link';
@@ -13,6 +14,15 @@ import { Colors, Fonts } from '@/constants/theme';
 
 type RecipeContentProps = {
   recipe: Recipe;
+  /**
+   * Rendered between the Ingredients and Method sections — currently used
+   * for the "Ask about this recipe" entry point (see
+   * app/recipe/[recipeId].tsx), placed there rather than above Ingredients
+   * so it reads as attached to the recipe body instead of a generic CTA
+   * before the reader has seen anything. Spacing matches the section
+   * rhythm regardless of whether Ingredients rendered.
+   */
+  afterIngredients?: ReactNode;
 };
 
 /**
@@ -33,7 +43,7 @@ type RecipeContentProps = {
  * image extraction isn't implemented yet, but this is where it would slot
  * in without otherwise restructuring the screen.
  */
-export function RecipeContent({ recipe }: RecipeContentProps) {
+export function RecipeContent({ recipe, afterIngredients }: RecipeContentProps) {
   const colors = Colors.light;
 
   const hasSource = !!recipe.source && recipe.source.trim().length > 0;
@@ -102,6 +112,8 @@ export function RecipeContent({ recipe }: RecipeContentProps) {
         </View>
       ) : null}
 
+      {afterIngredients ? <View style={styles.afterIngredients}>{afterIngredients}</View> : null}
+
       {visibleInstructions.length > 0 ? (
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.text }]}>Method</Text>
@@ -154,6 +166,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   section: {
+    marginTop: 40,
+  },
+  afterIngredients: {
     marginTop: 40,
   },
   sectionLabel: {
