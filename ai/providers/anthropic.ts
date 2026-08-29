@@ -64,15 +64,6 @@ export function createAnthropicProvider(apiKey: string | undefined): ChatProvide
         }
 
         const stopReason = toChatStopReason(response.stop_reason);
-        // TEMP DIAGNOSTIC LOGGING — remove once the "Couldn't reach
-        // SousChef" client-side reports are root-caused. Confirms Claude
-        // actually returned successfully before anything downstream of
-        // this point could fail. Shape/size only, never the prompt or reply.
-        console.log('[TEMP DIAGNOSTIC] Anthropic response received', {
-          stopReason,
-          textLength: text.length,
-          outputTokens: response.usage?.output_tokens,
-        });
         if (stopReason === 'max_tokens') {
           // DIAGNOSTIC — not an error (the caller still gets a usable, just
           // possibly incomplete, reply), so this only warns rather than
@@ -87,49 +78,29 @@ export function createAnthropicProvider(apiKey: string | undefined): ChatProvide
 
         return { ok: true, message: text, stopReason };
       } catch (error) {
-        // ---- TEMP DIAGNOSTIC LOGGING — remove once the "workspace ID" 400 is
-        // root-caused (see app/api/recipe-chat+api.ts for the matching log at
-        // the call site). Only ever reads status/type/headers off the SDK's
-        // own error object — never the request, the API key, or the
-        // Authorization/X-Api-Key headers we sent. `error.headers` here are
-        // the *response* headers Anthropic sent back, not our request
-        // headers, but they're redacted below anyway as a defensive measure.
+        // Server-side error log for a failed Claude call. Deliberately
+        // narrow: the SDK error's own status/type/request id, never the
+        // request we sent, the API key, any header, or the prompt/reply
+        // text. `requestID` is the one field worth keeping — it's what
+        // Anthropic support can correlate against.
         if (error instanceof Anthropic.APIError) {
-          console.error('[TEMP DIAGNOSTIC] Anthropic API error', {
+          console.error('[SousChef] Anthropic API error', {
             status: error.status,
-            errorClass: error.name,
             errorType: error.type,
             message: error.message,
-            body: error.error, // parsed { type, message } from Anthropic's JSON error body, if any
             requestId: error.requestID,
-            workspaceIdHeader: error.workspaceID,
-            responseHeaders: redactHeaders(error.headers),
           });
         } else {
-          console.error('[TEMP DIAGNOSTIC] Non-API error contacting Claude', {
+          console.error('[SousChef] Could not reach Claude', {
             name: error instanceof Error ? error.name : typeof error,
             message: error instanceof Error ? error.message : String(error),
           });
         }
-        // ---- end TEMP DIAGNOSTIC LOGGING
 
         return { ok: false, error: { code: 'request-failed', message: describeError(error) } };
       }
     },
   };
-}
-
-// TEMP DIAGNOSTIC LOGGING helper — remove alongside the console.error calls
-// above. Strips any header that could carry credentials before logging, even
-// though `error.headers` is Anthropic's response, not our request.
-const SENSITIVE_HEADER_NAMES = new Set(['authorization', 'x-api-key', 'cookie', 'set-cookie']);
-function redactHeaders(headers: Headers | undefined): Record<string, string> {
-  if (!headers) return {};
-  const result: Record<string, string> = {};
-  for (const [key, value] of headers.entries()) {
-    result[key] = SENSITIVE_HEADER_NAMES.has(key.toLowerCase()) ? '[redacted]' : value;
-  }
-  return result;
 }
 
 function toAnthropicMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {

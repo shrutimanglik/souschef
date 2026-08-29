@@ -11,6 +11,7 @@
     "lint": "expo lint",
     "test:extraction": "tsx extraction/test-corpus.ts",
     "test:organizer": "tsx --env-file=.env ai/test-recipe-organizer.ts",
+    "test:integrity": "tsx constants/test-recipe-integrity.ts",
     "agent:instagram": "tsx --env-file=.env agent/dev-instagram-agent.ts",
     "agent:instagram-transcript": "tsx --env-file=.env agent/dev-instagram-transcript.ts"
   },

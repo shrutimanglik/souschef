@@ -7,13 +7,6 @@ import { normalizeRecipe } from '@/constants/recipes';
 // the Anthropic provider here (rather than inside ai/) keeps ai/ itself
 // free of any direct process.env access.
 export async function POST(request: Request) {
-  // TEMP DIAGNOSTIC LOGGING — remove once the "Couldn't reach SousChef"
-  // client-side reports are root-caused. Confirms the request actually
-  // reaches this route at all; never logs the body.
-  console.log('[TEMP DIAGNOSTIC] recipe-chat POST received', {
-    contentType: request.headers.get('content-type'),
-  });
-
   let body: unknown;
   try {
     body = await request.json();
@@ -60,36 +53,16 @@ export async function POST(request: Request) {
       })
     );
 
-  // TEMP DIAGNOSTIC LOGGING — remove alongside the rest of this batch.
-  // Confirms the request body parsed into a valid recipe/message shape
-  // before it's handed to Claude; counts only, never content.
-  console.log('[TEMP DIAGNOSTIC] recipe-chat request parsed', {
-    ingredientCount: recipe.ingredients.length,
-    instructionCount: recipe.instructions.length,
-    messageCount: messages.length,
-  });
-
   const provider = createAnthropicProvider(process.env.ANTHROPIC_API_KEY);
   const result = await askAboutRecipe(provider, recipe, messages);
 
   if (!result.ok) {
-    // TEMP DIAGNOSTIC LOGGING — remove once the "workspace ID" 400 is
-    // root-caused. This is the propagated, already-stringified error; the
-    // richer SDK fields (status/type/headers) are logged in
-    // ai/providers/anthropic.ts, the only place the raw SDK error is
-    // available. Never logs the API key or request headers/body.
-    console.error('[TEMP DIAGNOSTIC] recipe-chat request failed', {
-      code: result.error.code,
-      message: result.error.message,
-    });
+    // A missing key is our own misconfiguration (500); anything else is an
+    // upstream failure talking to Claude (502). The richer SDK-level error
+    // detail is logged in ai/providers/anthropic.ts, the only place the raw
+    // SDK error object exists.
     const status = result.error.code === 'missing-api-key' ? 500 : 502;
     return Response.json({ ok: false, error: result.error }, { status });
   }
-  // TEMP DIAGNOSTIC LOGGING — remove alongside the rest of this batch.
-  // Confirms a 200 actually left this route with the expected shape.
-  console.log('[TEMP DIAGNOSTIC] recipe-chat responding ok', {
-    messageLength: result.message.length,
-    suggestionCount: result.suggestions.length,
-  });
   return Response.json({ ok: true, message: result.message, suggestions: result.suggestions });
 }

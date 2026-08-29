@@ -120,32 +120,17 @@ export default function RecipeChatScreen() {
         body: JSON.stringify({ recipe, messages: history }),
       });
 
-      // TEMP DIAGNOSTIC LOGGING — remove once the "Couldn't reach
-      // SousChef" reports are root-caused. Status/headers only.
-      console.log('[TEMP DIAGNOSTIC] recipe-chat response received', {
-        status: response.status,
-        ok: response.ok,
-        contentType: response.headers.get('content-type'),
-      });
-
+      // A non-JSON body here means the request never reached the API route
+      // as expected (a dev-server error page, a proxy, an offline stub) —
+      // worth distinguishing in the log from a route that answered
+      // properly with an error, since the two need very different fixes.
       let result;
       try {
         result = await response.json();
       } catch (parseError) {
-        // The body wasn't valid JSON — capture what it actually was (a
-        // status code and a text preview, never recipe/conversation
-        // content) so a non-JSON error page can be told apart from a
-        // truncated body.
-        const bodyPreview = await response
-          .clone()
-          .text()
-          .then((text) => text.slice(0, 300))
-          .catch(() => '<unreadable>');
-        console.error('[TEMP DIAGNOSTIC] recipe-chat response was not valid JSON', {
+        console.error('[SousChef] recipe-chat response was not valid JSON', {
           status: response.status,
           contentType: response.headers.get('content-type'),
-          bodyPreview,
-          parseErrorMessage: parseError instanceof Error ? parseError.message : String(parseError),
         });
         throw parseError;
       }
@@ -157,12 +142,12 @@ export default function RecipeChatScreen() {
         setError(result.error?.message ?? 'Something went wrong asking Claude.');
       }
     } catch (err) {
-      // TEMP DIAGNOSTIC LOGGING — this catch previously discarded the
-      // error entirely (`catch {}`), which is why past failures showed
-      // only the generic message below with no trace anywhere. Logs the
-      // error's own name/message only — the recipe and conversation text
-      // are the outgoing request, never part of what lands in this catch.
-      console.error('[TEMP DIAGNOSTIC] recipe-chat request failed on the client', {
+      // Must not become a bare `catch {}` again — it was one once, and a
+      // silently swallowed error here is indistinguishable from a network
+      // failure to anyone debugging it. Logs the error's own name/message
+      // only; the recipe and conversation text are in the outgoing
+      // request, never in what lands here.
+      console.error('[SousChef] recipe-chat request failed', {
         name: err instanceof Error ? err.name : typeof err,
         message: err instanceof Error ? err.message : String(err),
       });

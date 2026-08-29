@@ -105,16 +105,5 @@ export async function askAboutRecipe(
     return result;
   }
 
-  const split = splitMessageAndSuggestions(result.message);
-  // TEMP DIAGNOSTIC LOGGING — remove once the "Couldn't reach SousChef"
-  // client-side reports are root-caused. Lengths/counts only — never the
-  // recipe, the question, or the answer text itself.
-  console.log('[TEMP DIAGNOSTIC] askAboutRecipe split response', {
-    rawLength: result.message.length,
-    markerFound: result.message.includes(SUGGESTIONS_MARKER),
-    messageLength: split.message.length,
-    suggestionCount: split.suggestions.length,
-  });
-
-  return { ok: true, ...split };
+  return { ok: true, ...splitMessageAndSuggestions(result.message) };
 }

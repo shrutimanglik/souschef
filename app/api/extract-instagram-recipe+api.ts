@@ -1,8 +1,6 @@
 import { runInstagramRecipeAgent } from '@/agent';
 import type { AgentError, InstagramAgentResult } from '@/agent';
-import { AnthropicRecipeOrganizer } from '@/ai';
-import { createAnthropicClient } from '@/ai/providers/anthropic';
-import type { Recipe } from '@/constants/recipes';
+import { organizeRecipeIfPossible } from '@/ai';
 import type { ExtractionError, ExtractionResult } from '@/extraction';
 
 // Runs server-side (Expo Router API route), same pattern as
@@ -43,26 +41,10 @@ export async function GET(request: Request) {
     return Response.json(result);
   }
 
-  return Response.json({ ok: true, recipe: await organizeIfPossible(result.recipe) });
-}
-
-/**
- * Same organizing step app/api/extract-recipe+api.ts runs — see that
- * file's matching comment. Duplicated rather than shared: each `+api.ts`
- * route in this app is already self-contained (reads its own env vars,
- * builds its own response), and this is small enough that a shared helper
- * would be more indirection than the few lines it'd save.
- */
-async function organizeIfPossible(recipe: Recipe): Promise<Recipe> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return recipe;
-  }
-  try {
-    return await new AnthropicRecipeOrganizer(createAnthropicClient(apiKey)).organize(recipe);
-  } catch {
-    return recipe;
-  }
+  // The same best-effort organizing step app/api/extract-recipe+api.ts
+  // runs — shared via ai/organize-recipe.ts so the "can never fail an
+  // already-successful extraction" guarantee lives in exactly one place.
+  return Response.json({ ok: true, recipe: await organizeRecipeIfPossible(result.recipe, process.env.ANTHROPIC_API_KEY) });
 }
 
 /**

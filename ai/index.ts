@@ -1,4 +1,5 @@
 export { createAnthropicProvider } from './providers/anthropic';
+export { organizeRecipeIfPossible } from './organize-recipe';
 export { AnthropicRecipeOrganizer } from './providers/anthropic-recipe-organizer';
 export { AnthropicTextRecipeExtractor } from './providers/anthropic-text-recipe';
 export { askAboutRecipe } from './recipe-conversation';

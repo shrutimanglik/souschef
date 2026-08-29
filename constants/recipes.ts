@@ -253,6 +253,53 @@ function normalizeComponent(raw: unknown): RecipeComponent | null {
 }
 
 /**
+ * True only if `components` account for EVERY ingredient and EVERY
+ * instruction exactly once — the same total-partition invariant
+ * validateAndBuildComponents (ai/providers/anthropic-recipe-organizer.ts)
+ * enforces when a grouping is first created.
+ *
+ * This has to be re-checked on load, not just at creation, because the
+ * grouped UI renders ingredients/instructions ONLY through their
+ * components (see RecipeContent/RecipeEditor). A component set that has
+ * decayed into a partial cover — one component dropped by
+ * normalizeComponent for a malformed shape, storage hand-edited, a
+ * half-written record — would therefore make real, still-present recipe
+ * data silently invisible. Fail closed instead: an incomplete grouping is
+ * discarded entirely and the recipe falls back to its flat lists, where
+ * everything is guaranteed to be shown. Structure is disposable;
+ * ingredients and instructions are not.
+ */
+function componentsCoverRecipe(
+  components: RecipeComponent[],
+  ingredients: Ingredient[],
+  instructions: string[]
+): boolean {
+  if (components.length === 0) {
+    return false;
+  }
+  const ingredientIds = new Set(ingredients.map((ingredient) => ingredient.id));
+  const seenIngredientIds = new Set<string>();
+  const seenInstructionIndexes = new Set<number>();
+
+  for (const component of components) {
+    for (const id of component.ingredientIds) {
+      if (!ingredientIds.has(id) || seenIngredientIds.has(id)) {
+        return false; // references a missing ingredient, or double-counts one
+      }
+      seenIngredientIds.add(id);
+    }
+    for (const index of component.instructionIndexes) {
+      if (index < 0 || index >= instructions.length || seenInstructionIndexes.has(index)) {
+        return false;
+      }
+      seenInstructionIndexes.add(index);
+    }
+  }
+
+  return seenIngredientIds.size === ingredients.length && seenInstructionIndexes.size === instructions.length;
+}
+
+/**
  * Upgrades a recipe loaded from storage to the current `Recipe` shape.
  * Persisted data can predate fields added since it was saved (e.g. an
  * older prototype's recipes have no `sourceUrl`/`servings`/time fields) —
@@ -263,9 +310,16 @@ function normalizeComponent(raw: unknown): RecipeComponent | null {
  */
 export function normalizeRecipe(fallbackId: string, raw: unknown): Recipe {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<Recipe>;
+  const ingredients = Array.isArray(value.ingredients)
+    ? value.ingredients.map((ingredient, index) => normalizeIngredient(ingredient, index))
+    : [];
+  const instructions = Array.isArray(value.instructions)
+    ? value.instructions.filter((step): step is string => typeof step === 'string')
+    : [];
   const components = Array.isArray(value.components)
     ? value.components.map(normalizeComponent).filter((component): component is RecipeComponent => component !== null)
     : [];
+  const coveringComponents = componentsCoverRecipe(components, ingredients, instructions) ? components : [];
   return {
     id: typeof value.id === 'string' && value.id ? value.id : fallbackId,
     title: typeof value.title === 'string' && value.title ? value.title : 'Untitled recipe',
@@ -276,13 +330,9 @@ export function normalizeRecipe(fallbackId: string, raw: unknown): Recipe {
     prepTime: typeof value.prepTime === 'number' && Number.isFinite(value.prepTime) ? value.prepTime : 0,
     cookTime: typeof value.cookTime === 'number' && Number.isFinite(value.cookTime) ? value.cookTime : 0,
     totalTime: typeof value.totalTime === 'number' && Number.isFinite(value.totalTime) ? value.totalTime : 0,
-    ingredients: Array.isArray(value.ingredients)
-      ? value.ingredients.map((ingredient, index) => normalizeIngredient(ingredient, index))
-      : [],
-    instructions: Array.isArray(value.instructions)
-      ? value.instructions.filter((step): step is string => typeof step === 'string')
-      : [],
-    ...(components.length > 0 ? { components } : {}),
+    ingredients,
+    instructions,
+    ...(coveringComponents.length > 0 ? { components: coveringComponents } : {}),
     ...(typeof value.imageUrl === 'string' && value.imageUrl ? { imageUrl: value.imageUrl } : {}),
     ...(isRecipeExtractionInfo(value.extraction) ? { extraction: value.extraction } : {}),
   };

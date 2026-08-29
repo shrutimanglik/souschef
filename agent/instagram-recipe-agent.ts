@@ -69,7 +69,25 @@ import type {
   SearchProvider,
 } from './types';
 
-const TEXT_SOURCE_TYPES: RecipeTextSourceType[] = ['instagram-caption', 'video-transcript', 'comment', 'ocr', 'manual'];
+/**
+ * The sourceTypes extract_recipe_from_text will accept FROM THIS AGENT —
+ * deliberately narrower than ai/types.ts's RecipeTextSourceType union.
+ *
+ * Only the two this agent can actually produce evidence for are listed:
+ * a caption (get_instagram_metadata) and a transcript
+ * (get_instagram_transcript). Notably absent is 'comment' — Instagram
+ * comments are intentionally not a V1 capability (see this file's header
+ * for the cost/hit-rate finding behind that), so there is no tool here
+ * that can retrieve one. Offering it as a schema option would advertise a
+ * source the agent has no legitimate way to obtain, which is exactly how a
+ * model ends up claiming one. 'ocr'/'manual' are excluded for the same
+ * reason: no tool produces them yet. Both stay in RecipeTextSourceType
+ * itself, which describes the whole ai/ layer, not this one agent.
+ *
+ * Single source of truth for both the runtime check and the tool schema's
+ * enum below, so the two can't drift apart.
+ */
+const AGENT_TEXT_SOURCE_TYPES = ['instagram-caption', 'video-transcript'] as const satisfies readonly RecipeTextSourceType[];
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 4096;
@@ -178,7 +196,7 @@ const TOOLS: Anthropic.Tool[] = [
         text: { type: 'string', description: 'The recipe-bearing text itself — the caption or transcript content you already retrieved.' },
         sourceType: {
           type: 'string',
-          enum: ['instagram-caption', 'video-transcript', 'comment', 'ocr', 'manual'],
+          enum: [...AGENT_TEXT_SOURCE_TYPES],
           description: 'Where this text came from.',
         },
         sourceUrl: { type: 'string', description: "The Instagram URL this text is associated with — normally the Reel's own URL." },
@@ -227,7 +245,7 @@ async function executeTool(
   transcriptProvider: InstagramTranscriptProvider,
   textExtractor: TextRecipeExtractor,
   extractionsByUrl: Map<string, ExtractionResult>
-): Promise<{ ok: boolean; resultText: string; summary: string }> {
+): Promise<{ ok: boolean; resultText: string; summary: string; extraction?: ExtractionResult }> {
   switch (name) {
     case 'get_instagram_metadata': {
       const url = getStringInput(input, 'url');
@@ -282,7 +300,7 @@ async function executeTool(
       }
       const result = await extractRecipeFromCandidateUrl(url);
       extractionsByUrl.set(url, result);
-      return { ok: result.ok, resultText: JSON.stringify(result), summary: summarizeExtractionResult(result) };
+      return { ok: result.ok, resultText: JSON.stringify(result), summary: summarizeExtractionResult(result), extraction: result };
     }
     case 'extract_recipe_from_text': {
       const text = getStringInput(input, 'text');
@@ -290,10 +308,10 @@ async function executeTool(
       if (!text) {
         return { ok: false, resultText: 'Missing required "text".', summary: 'missing text' };
       }
-      if (!sourceTypeRaw || !TEXT_SOURCE_TYPES.includes(sourceTypeRaw as RecipeTextSourceType)) {
+      if (!sourceTypeRaw || !(AGENT_TEXT_SOURCE_TYPES as readonly string[]).includes(sourceTypeRaw)) {
         return {
           ok: false,
-          resultText: `"sourceType" must be one of: ${TEXT_SOURCE_TYPES.join(', ')}.`,
+          resultText: `"sourceType" must be one of: ${AGENT_TEXT_SOURCE_TYPES.join(', ')}.`,
           summary: 'invalid sourceType',
         };
       }
@@ -309,12 +327,15 @@ async function executeTool(
       // Keyed the same way as extract_recipe_from_url's results, so
       // finalizeFromReport's lookup (by report_result's selectedSourceUrl)
       // works identically regardless of which extractor produced it — as
-      // long as the agent passes the same URL to both. For this agent,
-      // that's always the Instagram Reel URL itself.
+      // long as the agent passes the same URL to both. `sourceUrl` is
+      // optional in this tool's schema though, so this keying can't be
+      // relied on alone; the returned `extraction` below is what
+      // guarantees a successful result is never lost (see
+      // finalizeFromReport).
       if (sourceUrl) {
         extractionsByUrl.set(sourceUrl, result);
       }
-      return { ok: result.ok, resultText: JSON.stringify(result), summary: summarizeExtractionResult(result) };
+      return { ok: result.ok, resultText: JSON.stringify(result), summary: summarizeExtractionResult(result), extraction: result };
     }
     default:
       return { ok: false, resultText: `Unknown tool "${name}".`, summary: 'unknown tool' };
@@ -325,10 +346,17 @@ function toConfidence(value: unknown): AgentConfidence {
   return value === 'high' || value === 'medium' || value === 'low' ? value : 'low';
 }
 
-function finalizeFromReport(
+/**
+ * Turns the agent's report_result call into the final InstagramAgentResult.
+ * Exported for direct unit testing without a live agent run — same reason
+ * validateAndBuildComponents is exported in
+ * ai/providers/anthropic-recipe-organizer.ts.
+ */
+export function finalizeFromReport(
   turn: number,
   block: Anthropic.ToolUseBlock,
   extractionsByUrl: Map<string, ExtractionResult>,
+  lastSuccessfulExtraction: ExtractionResult | null,
   toolCalls: AgentToolCallLogEntry[]
 ): InstagramAgentResult {
   const input = (block.input ?? {}) as Record<string, unknown>;
@@ -337,14 +365,33 @@ function finalizeFromReport(
   const discovery = getStringInput(input, 'discovery')?.trim() || '(no discovery notes provided)';
   const warnings = Array.isArray(input.warnings) ? input.warnings.filter((w): w is string => typeof w === 'string') : [];
 
-  let extraction: ExtractionResult | null = null;
-  if (selectedSourceUrl) {
-    extraction = extractionsByUrl.get(selectedSourceUrl) ?? null;
-    if (!extraction) {
+  // Prefer the extraction the agent actually pointed at. But an exact URL
+  // match is NOT a safe requirement, because a successful extraction can
+  // legitimately fail to line up with selectedSourceUrl in three ways:
+  //   1. extract_recipe_from_text's `sourceUrl` is optional in its schema,
+  //      so a caption extraction may never have been keyed at all;
+  //   2. a caption/transcript recipe has no webpage source, so the agent
+  //      may correctly report selectedSourceUrl: "" while still holding a
+  //      perfectly good extracted Recipe;
+  //   3. the reported URL can differ from the extracted one by a trailing
+  //      slash or a redirect.
+  // In all three the recipe already passed extraction AND validation —
+  // dropping it would tell the user "no recipe found" about a recipe we
+  // successfully extracted. Fall back to the last successful extraction
+  // instead of discarding it. This never invents anything: the fallback is
+  // a real result produced by one of the two extractors during this run.
+  let extraction: ExtractionResult | null = selectedSourceUrl ? extractionsByUrl.get(selectedSourceUrl) ?? null : null;
+  if (!extraction && lastSuccessfulExtraction) {
+    extraction = lastSuccessfulExtraction;
+    if (selectedSourceUrl) {
       warnings.push(
-        'A source URL was selected but neither extract_recipe_from_url nor extract_recipe_from_text produced a result for it.'
+        `Reported source "${selectedSourceUrl}" did not exactly match an extraction from this run — using the recipe that was successfully extracted instead.`
       );
     }
+  } else if (!extraction && selectedSourceUrl) {
+    warnings.push(
+      'A source URL was selected but neither extract_recipe_from_url nor extract_recipe_from_text produced a result for it.'
+    );
   }
 
   toolCalls.push({
@@ -395,6 +442,10 @@ export async function runInstagramRecipeAgent(
   const textExtractor = new AnthropicTextRecipeExtractor(client);
   const toolCalls: AgentToolCallLogEntry[] = [];
   const extractionsByUrl = new Map<string, ExtractionResult>();
+  // The safety net behind extractionsByUrl's exact-URL keying — see
+  // finalizeFromReport for the three ways a real, successful extraction
+  // can fail to match the URL the agent finally reports.
+  let lastSuccessfulExtraction: ExtractionResult | null = null;
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Instagram URL: ${instagramUrl}` }];
 
@@ -414,7 +465,7 @@ export async function runInstagramRecipeAgent(
 
       const reportBlock = toolUseBlocks.find((b) => b.name === 'report_result');
       if (reportBlock) {
-        return finalizeFromReport(turn, reportBlock, extractionsByUrl, toolCalls);
+        return finalizeFromReport(turn, reportBlock, extractionsByUrl, lastSuccessfulExtraction, toolCalls);
       }
 
       if (toolUseBlocks.length === 0) {
@@ -426,7 +477,7 @@ export async function runInstagramRecipeAgent(
 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of toolUseBlocks) {
-        const { ok, resultText, summary } = await executeTool(
+        const { ok, resultText, summary, extraction } = await executeTool(
           block.name,
           block.input,
           searchProvider,
@@ -435,6 +486,9 @@ export async function runInstagramRecipeAgent(
           textExtractor,
           extractionsByUrl
         );
+        if (extraction?.ok) {
+          lastSuccessfulExtraction = extraction;
+        }
         toolCalls.push({ turn, tool: block.name, input: block.input, ok, summary });
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: resultText, is_error: !ok });
       }
