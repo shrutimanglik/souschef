@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -11,6 +11,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+// Direct file import, not the `@/agent` barrel — the barrel also re-exports
+// runInstagramRecipeAgent, which pulls in the Anthropic SDK and every
+// ScrapeCreators provider. isInstagramUrl itself has zero dependencies
+// (see agent/lib/instagram-url.ts), but importing it via the barrel would
+// still drag that whole server-only graph into the client bundle. This is
+// the exact same file path the agent's own tools import it from.
+import { isInstagramUrl } from '@/agent/lib/instagram-url';
 import { PrimaryButton } from '@/components/primary-button';
 import { Colors, Fonts } from '@/constants/theme';
 import { setPendingExtractedRecipe } from '@/contexts/pending-recipe';
@@ -32,6 +39,24 @@ export default function PasteLinkScreen() {
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
+  // Drives which loading copy shows below — the two paths have very
+  // different latency (website: usually under a couple seconds; Instagram:
+  // a multi-step agent loop, ~30-85s) and the user should know why.
+  const [isInstagramExtraction, setIsInstagramExtraction] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // A live "how long has this been running" counter — not a fake progress
+  // bar (we have no real step-by-step signal to show honestly), just
+  // enough live feedback that a 30-85s wait doesn't read as a frozen
+  // screen. Only runs while extracting; resets between attempts.
+  useEffect(() => {
+    if (!isExtracting) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const interval = setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isExtracting]);
 
   const handleContinue = async () => {
     const trimmed = url.trim();
@@ -44,10 +69,17 @@ export default function PasteLinkScreen() {
       return;
     }
 
+    // Same URL, same "Continue" button — the app decides which pipeline to
+    // use, not the user. Both endpoints return the identical ExtractionResult
+    // shape below, so nothing past this point needs to know which one ran.
+    const instagram = isInstagramUrl(trimmed);
+    const endpoint = instagram ? '/api/extract-instagram-recipe' : '/api/extract-recipe';
+
     setError(null);
+    setIsInstagramExtraction(instagram);
     setIsExtracting(true);
     try {
-      const response = await fetch(`/api/extract-recipe?url=${encodeURIComponent(trimmed)}`);
+      const response = await fetch(`${endpoint}?url=${encodeURIComponent(trimmed)}`);
       const result: ExtractionResult = await response.json();
       if (result.ok) {
         setPendingExtractedRecipe(result.recipe);
@@ -77,7 +109,7 @@ export default function PasteLinkScreen() {
               setUrl(text);
               setError(null);
             }}
-            placeholder="Paste recipe URL"
+            placeholder="Paste a recipe or Instagram link"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -90,14 +122,23 @@ export default function PasteLinkScreen() {
             <Text style={[styles.error, { color: colors.text }]}>{error}</Text>
           ) : (
             <Text style={[styles.hint, { color: colors.textMuted }]}>
-              Example: paste a recipe URL from your favorite recipe website
+              Works with a recipe website, or an Instagram Reel or post
             </Text>
           )}
 
           {isExtracting ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator color={colors.textMuted} />
-              <Text style={[styles.loadingText, { color: colors.textMuted }]}>Fetching recipe…</Text>
+              <View style={styles.loadingTextGroup}>
+                <Text style={[styles.loadingText, { color: colors.textMuted }]}>
+                  {isInstagramExtraction ? 'Reading the Instagram post…' : 'Fetching recipe…'}
+                </Text>
+                {isInstagramExtraction ? (
+                  <Text style={[styles.loadingSubtext, { color: colors.textMuted }]}>
+                    This can take up to a minute — {elapsedSeconds}s
+                  </Text>
+                ) : null}
+              </View>
             </View>
           ) : (
             <PrimaryButton title="Continue" onPress={handleContinue} style={styles.button} />
@@ -152,7 +193,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
   },
+  loadingTextGroup: {
+    alignItems: 'center',
+    gap: 2,
+  },
   loadingText: {
     fontSize: 14,
+  },
+  loadingSubtext: {
+    fontSize: 12,
   },
 });

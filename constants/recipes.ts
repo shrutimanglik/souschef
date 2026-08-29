@@ -37,6 +37,17 @@ export type Recipe = {
   /** Ordered preparation steps. */
   instructions: string[];
   /**
+   * Optional grouping of the ingredients/instructions above into
+   * recipe-defined components (e.g. "Dough" and "Filling") — see
+   * RecipeComponent. Absent for most recipes (a single, undivided recipe
+   * is the common case). Only ever added by the organizer
+   * (ai/providers/anthropic-recipe-organizer.ts) after extraction, never
+   * by extraction itself — `ingredients`/`instructions` above remain the
+   * complete, ordered source of truth regardless of whether this is
+   * present; components only reference them, never duplicate them.
+   */
+  components?: RecipeComponent[];
+  /**
    * Captured from extraction when available. Not rendered or downloaded
    * anywhere yet — this only stores the URL so a hero image can be added
    * later without re-extracting.
@@ -45,12 +56,64 @@ export type Recipe = {
   /**
    * How this recipe was obtained, if it wasn't hand-entered — absent for
    * recipes with no extraction history (e.g. a future "Add manually").
-   * See extraction/ for the pipeline that populates this.
+   * See extraction/ for the deterministic pipeline that populates
+   * `'json-ld'`, and ai/providers/anthropic-text-recipe.ts for the
+   * LLM-based text pipeline that populates `'ai-text-extraction'` — both
+   * converge on this same Recipe shape.
    */
   extraction?: RecipeExtractionInfo;
 };
 
-export type ExtractionMethod = 'json-ld' | 'manual';
+/**
+ * One component/part of a multi-part recipe (e.g. "Kebabs" and "Chutney").
+ * Deliberately reference-only — ids into `Recipe.ingredients` and indexes
+ * into `Recipe.instructions`, in their original relative order — never a
+ * second copy of the ingredient/instruction data itself. See
+ * ai/providers/anthropic-recipe-organizer.ts for the validation guarantee
+ * that makes this safe to trust: every id/index here is verified to
+ * reference a real, unmodified entry, and every entry in both arrays is
+ * covered by exactly one component whenever this field is set at all.
+ */
+export type RecipeComponent = {
+  /** e.g. "Kebabs", "Chutney" — always grounded in the recipe's own wording, never invented. */
+  name: string;
+  ingredientIds: string[];
+  instructionIndexes: number[];
+};
+
+/**
+ * A component's ingredients, resolved from ids back to the recipe's real
+ * entries and their true (flat-array) index — so a caller that groups
+ * ingredients by component can still address the actual `Recipe.
+ * ingredients` array by index (e.g. to edit it) rather than a grouped
+ * copy. Shared by RecipeEditor and RecipeContent — the editable and
+ * read-only renderings of a recipe both need identical grouping, never two
+ * copies of this logic. Ids that no longer resolve (e.g. hand-edited
+ * storage) are skipped rather than crashing.
+ */
+export function resolveComponentIngredients(
+  recipe: Pick<Recipe, 'ingredients'>,
+  component: RecipeComponent
+): { ingredient: Ingredient; index: number }[] {
+  return component.ingredientIds
+    .map((id) => {
+      const index = recipe.ingredients.findIndex((ingredient) => ingredient.id === id);
+      return index === -1 ? null : { ingredient: recipe.ingredients[index], index };
+    })
+    .filter((entry): entry is { ingredient: Ingredient; index: number } => entry !== null);
+}
+
+/** Same idea as resolveComponentIngredients, for instructions — resolved by index instead of id, since instructions have no id of their own. */
+export function resolveComponentInstructions(
+  recipe: Pick<Recipe, 'instructions'>,
+  component: RecipeComponent
+): { step: string; index: number }[] {
+  return component.instructionIndexes
+    .filter((index) => index >= 0 && index < recipe.instructions.length)
+    .map((index) => ({ step: recipe.instructions[index], index }));
+}
+
+export type ExtractionMethod = 'json-ld' | 'ai-text-extraction' | 'manual';
 
 /** A specific field extraction couldn't fully resolve — informational, not blocking. */
 export type ExtractionWarning = {
@@ -169,6 +232,26 @@ function normalizeIngredient(raw: unknown, index: number): Ingredient {
   };
 }
 
+function normalizeComponent(raw: unknown): RecipeComponent | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const value = raw as Partial<RecipeComponent>;
+  if (typeof value.name !== 'string' || !value.name.trim()) {
+    return null;
+  }
+  if (!Array.isArray(value.ingredientIds) || !value.ingredientIds.every((id) => typeof id === 'string')) {
+    return null;
+  }
+  if (
+    !Array.isArray(value.instructionIndexes) ||
+    !value.instructionIndexes.every((index) => typeof index === 'number' && Number.isInteger(index))
+  ) {
+    return null;
+  }
+  return { name: value.name, ingredientIds: value.ingredientIds, instructionIndexes: value.instructionIndexes };
+}
+
 /**
  * Upgrades a recipe loaded from storage to the current `Recipe` shape.
  * Persisted data can predate fields added since it was saved (e.g. an
@@ -180,6 +263,9 @@ function normalizeIngredient(raw: unknown, index: number): Ingredient {
  */
 export function normalizeRecipe(fallbackId: string, raw: unknown): Recipe {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<Recipe>;
+  const components = Array.isArray(value.components)
+    ? value.components.map(normalizeComponent).filter((component): component is RecipeComponent => component !== null)
+    : [];
   return {
     id: typeof value.id === 'string' && value.id ? value.id : fallbackId,
     title: typeof value.title === 'string' && value.title ? value.title : 'Untitled recipe',
@@ -196,6 +282,7 @@ export function normalizeRecipe(fallbackId: string, raw: unknown): Recipe {
     instructions: Array.isArray(value.instructions)
       ? value.instructions.filter((step): step is string => typeof step === 'string')
       : [],
+    ...(components.length > 0 ? { components } : {}),
     ...(typeof value.imageUrl === 'string' && value.imageUrl ? { imageUrl: value.imageUrl } : {}),
     ...(isRecipeExtractionInfo(value.extraction) ? { extraction: value.extraction } : {}),
   };
@@ -207,7 +294,7 @@ function isRecipeExtractionInfo(value: unknown): value is RecipeExtractionInfo {
   }
   const info = value as Partial<RecipeExtractionInfo>;
   return (
-    (info.method === 'json-ld' || info.method === 'manual') &&
+    (info.method === 'json-ld' || info.method === 'ai-text-extraction' || info.method === 'manual') &&
     typeof info.fetchedAt === 'string' &&
     Array.isArray(info.warnings)
   );

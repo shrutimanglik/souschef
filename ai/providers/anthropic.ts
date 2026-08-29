@@ -25,6 +25,13 @@ import type { ChatCompletionResult, ChatMessage, ChatProvider, ChatStopReason } 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 2048;
 
+// Extracted so any other server-side Claude caller (see agent/instagram-recipe-agent.ts,
+// which needs raw tool-use access this narrow ChatProvider interface doesn't expose)
+// constructs the client the same way, rather than each duplicating `new Anthropic(...)`.
+export function createAnthropicClient(apiKey: string): Anthropic {
+  return new Anthropic({ apiKey });
+}
+
 export function createAnthropicProvider(apiKey: string | undefined): ChatProvider {
   return {
     name: 'anthropic',
@@ -36,7 +43,7 @@ export function createAnthropicProvider(apiKey: string | undefined): ChatProvide
         };
       }
 
-      const client = new Anthropic({ apiKey });
+      const client = createAnthropicClient(apiKey);
 
       try {
         const response = await client.messages.create({

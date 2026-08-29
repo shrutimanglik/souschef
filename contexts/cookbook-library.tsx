@@ -40,8 +40,10 @@ type CookbookLibraryContextValue = {
   getRecipesForCookbook: (cookbook: Cookbook) => Recipe[];
   /**
    * Saves a recipe into a cookbook. If a recipe with the same normalized
-   * `sourceUrl` already exists, no new canonical Recipe is created — the
-   * existing one is referenced instead (see `normalizeSourceUrl`).
+   * `sourceUrl` already exists, no new canonical Recipe is created — its
+   * id is reused and its content is refreshed from `recipe` instead (see
+   * `normalizeSourceUrl`), so every cookbook already referencing it sees
+   * the update too.
    */
   addRecipeToCookbook: (cookbookId: string, recipe: Recipe) => void;
   /**
@@ -142,9 +144,17 @@ export function CookbookLibraryProvider({ children }: { children: ReactNode }) {
       );
       const canonicalId = existing?.id ?? createRecipeId();
 
-      if (!existing) {
-        setRecipesById((prev) => ({ ...prev, [canonicalId]: { ...recipeInput, id: canonicalId } }));
-      }
+      // Always write recipeInput — even when a canonical recipe already
+      // exists for this sourceUrl. Save means "persist what's currently in
+      // the draft" (Preview may have just re-extracted/re-organized it, or
+      // the user edited a field), so an existing recipe's stale content —
+      // including a since-computed `components` grouping — must not win
+      // over a fresh save just because the URL was saved once before. This
+      // still creates no "(2)" duplicate: the canonical id is reused, so
+      // every cookbook that already referenced it sees the refreshed
+      // content too, exactly as recipesById's single-canonical-copy model
+      // intends.
+      setRecipesById((prev) => ({ ...prev, [canonicalId]: { ...recipeInput, id: canonicalId } }));
 
       // All Recipes needs no separate write here: it's derived from
       // recipesById above, so referencing the (new or reused) canonical id

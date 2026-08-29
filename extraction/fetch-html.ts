@@ -1,6 +1,8 @@
 import type { ExtractionError } from './types';
 
-export type FetchHtmlResult = { ok: true; html: string } | { ok: false; error: ExtractionError };
+export type FetchHtmlResult =
+  | { ok: true; html: string; /** The URL actually fetched, after following redirects (fetch() follows them by default). Existing callers keep using their own requested URL for `page.url` (see extract-recipe.ts) — this is additive, read by agent/tools/fetch-page.ts, which does need the post-redirect URL. */ url: URL }
+  | { ok: false; error: ExtractionError };
 
 // A realistic browser UA — some recipe sites block or serve a stripped-down
 // page to non-browser clients. This is a personal tool fetching one page a
@@ -22,7 +24,7 @@ export async function fetchHtml(url: URL): Promise<FetchHtmlResult> {
       };
     }
     const html = await response.text();
-    return { ok: true, html };
+    return { ok: true, html, url: new URL(response.url || url.toString()) };
   } catch {
     return {
       ok: false,

@@ -17,7 +17,9 @@
 
 const JSON_LD_SCRIPT_RE = /<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
 
-function decodeHtmlEntities(text: string): string {
+// Exported for reuse by agent/lib/html.ts (Instagram agent's Open Graph tag
+// parsing needs the same handful of entities) — no behavior change here.
+export function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')

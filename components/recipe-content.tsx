@@ -8,6 +8,9 @@ import {
   formatIngredientQuantity,
   formatServings,
   formatTimeSummary,
+  resolveComponentIngredients,
+  resolveComponentInstructions,
+  type Ingredient,
   type Recipe,
 } from '@/constants/recipes';
 import { Colors, Fonts } from '@/constants/theme';
@@ -42,9 +45,19 @@ type RecipeContentProps = {
  * Future: a hero recipe image would render above the header block below —
  * image extraction isn't implemented yet, but this is where it would slot
  * in without otherwise restructuring the screen.
+ *
+ * Component rendering: when `recipe.components` is present (see
+ * constants/recipes.ts and ai/providers/anthropic-recipe-organizer.ts),
+ * ingredients and instructions are grouped under their component's name —
+ * still all ingredients before all instructions, per component. Mirrors
+ * RecipeEditor's grouped rendering exactly (same resolver helpers, same
+ * per-component instruction numbering), since this is the read-only view
+ * of the very same recipe. No `components` (the common case) renders
+ * exactly as before.
  */
 export function RecipeContent({ recipe, afterIngredients }: RecipeContentProps) {
   const colors = Colors.light;
+  const components = recipe.components && recipe.components.length > 0 ? recipe.components : null;
 
   const hasSource = !!recipe.source && recipe.source.trim().length > 0;
   const hasSourceUrl = !!recipe.sourceUrl && recipe.sourceUrl.trim().length > 0;
@@ -54,10 +67,8 @@ export function RecipeContent({ recipe, afterIngredients }: RecipeContentProps) 
 
   // A row with no quantity, no unit, and no name has nothing to show —
   // skip it rather than rendering a blank divided row.
-  const visibleIngredients = recipe.ingredients.filter(
-    (ingredient) => ingredient.name.trim() || ingredient.unit.trim() || ingredient.quantity > 0
-  );
-  const visibleInstructions = recipe.instructions.filter((step) => step && step.trim().length > 0);
+  const visibleIngredients = recipe.ingredients.filter(isVisibleIngredient);
+  const visibleInstructions = recipe.instructions.filter(isVisibleInstruction);
 
   return (
     <View>
@@ -91,24 +102,36 @@ export function RecipeContent({ recipe, afterIngredients }: RecipeContentProps) 
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.text }]}>Ingredients</Text>
           <View style={[styles.sectionRule, { backgroundColor: colors.border }]} />
-          {visibleIngredients.map((ingredient, index) => (
-            <View
-              key={ingredient.id}
-              accessible
-              accessibilityLabel={formatIngredient(ingredient)}
-              style={[
-                styles.ingredientRow,
-                index < visibleIngredients.length - 1 && {
-                  borderBottomColor: colors.border,
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                },
-              ]}>
-              <Text style={[styles.ingredientQty, { color: colors.textMuted }]}>
-                {formatIngredientQuantity(ingredient)}
-              </Text>
-              <Text style={[styles.ingredientName, { color: colors.text }]}>{ingredient.name}</Text>
-            </View>
-          ))}
+          {components
+            ? components.map((component, componentIndex) => {
+                const componentIngredients = resolveComponentIngredients(recipe, component)
+                  .map(({ ingredient }) => ingredient)
+                  .filter(isVisibleIngredient);
+                if (componentIngredients.length === 0) {
+                  return null;
+                }
+                return (
+                  <View key={component.name} style={componentIndex > 0 ? styles.componentGroup : undefined}>
+                    <Text style={[styles.componentLabel, { color: colors.textMuted }]}>{component.name}</Text>
+                    {componentIngredients.map((ingredient, i) => (
+                      <IngredientRow
+                        key={ingredient.id}
+                        ingredient={ingredient}
+                        isLast={i === componentIngredients.length - 1}
+                        colors={colors}
+                      />
+                    ))}
+                  </View>
+                );
+              })
+            : visibleIngredients.map((ingredient, index) => (
+                <IngredientRow
+                  key={ingredient.id}
+                  ingredient={ingredient}
+                  isLast={index === visibleIngredients.length - 1}
+                  colors={colors}
+                />
+              ))}
         </View>
       ) : null}
 
@@ -118,16 +141,82 @@ export function RecipeContent({ recipe, afterIngredients }: RecipeContentProps) 
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.text }]}>Method</Text>
           <View style={[styles.sectionRule, { backgroundColor: colors.border }]} />
-          {visibleInstructions.map((step, index) => (
-            <View key={step} style={styles.methodStep}>
-              <Text style={[styles.stepNumber, { color: colors.textMuted, fontFamily: Fonts.serif }]}>
-                {String(index + 1).padStart(2, '0')}
-              </Text>
-              <Text style={[styles.stepText, { color: colors.text }]}>{step}</Text>
-            </View>
-          ))}
+          {components
+            ? components.map((component, componentIndex) => {
+                const componentInstructions = resolveComponentInstructions(recipe, component).filter(({ step }) =>
+                  isVisibleInstruction(step)
+                );
+                if (componentInstructions.length === 0) {
+                  return null;
+                }
+                return (
+                  <View key={component.name} style={componentIndex > 0 ? styles.componentGroup : undefined}>
+                    <Text style={[styles.componentLabel, { color: colors.textMuted }]}>{component.name}</Text>
+                    {componentInstructions.map(({ step, index }, i) => (
+                      <InstructionRow key={index} step={step} displayNumber={i + 1} colors={colors} />
+                    ))}
+                  </View>
+                );
+              })
+            : visibleInstructions.map((step, index) => (
+                <InstructionRow key={index} step={step} displayNumber={index + 1} colors={colors} />
+              ))}
         </View>
       ) : null}
+    </View>
+  );
+}
+
+// A row with no quantity, no unit, and no name has nothing to show — skip
+// it rather than rendering a blank divided row. Shared by the flat and
+// per-component rendering paths above, so a filtered-out ingredient stays
+// filtered out either way.
+function isVisibleIngredient(ingredient: Ingredient): boolean {
+  return !!(ingredient.name.trim() || ingredient.unit.trim() || ingredient.quantity > 0);
+}
+
+function isVisibleInstruction(step: string): boolean {
+  return !!step && step.trim().length > 0;
+}
+
+function IngredientRow({
+  ingredient,
+  isLast,
+  colors,
+}: {
+  ingredient: Ingredient;
+  isLast: boolean;
+  colors: (typeof Colors)['light'];
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={formatIngredient(ingredient)}
+      style={[
+        styles.ingredientRow,
+        !isLast && { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
+      ]}>
+      <Text style={[styles.ingredientQty, { color: colors.textMuted }]}>{formatIngredientQuantity(ingredient)}</Text>
+      <Text style={[styles.ingredientName, { color: colors.text }]}>{ingredient.name}</Text>
+    </View>
+  );
+}
+
+function InstructionRow({
+  step,
+  displayNumber,
+  colors,
+}: {
+  step: string;
+  displayNumber: number;
+  colors: (typeof Colors)['light'];
+}) {
+  return (
+    <View style={styles.methodStep}>
+      <Text style={[styles.stepNumber, { color: colors.textMuted, fontFamily: Fonts.serif }]}>
+        {String(displayNumber).padStart(2, '0')}
+      </Text>
+      <Text style={[styles.stepText, { color: colors.text }]}>{step}</Text>
     </View>
   );
 }
@@ -180,6 +269,19 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     marginTop: 10,
     marginBottom: 4,
+  },
+  // A component's name, e.g. "Kebabs" — a sub-heading under Ingredients/
+  // Method, quieter than sectionLabel (that's the Ingredients/Method
+  // heading itself; this is one level down). Matches RecipeEditor's own
+  // componentLabel/componentGroup treatment.
+  componentLabel: {
+    fontFamily: Fonts.serif,
+    fontSize: 15,
+    marginTop: 14,
+    marginBottom: 2,
+  },
+  componentGroup: {
+    marginTop: 10,
   },
   ingredientRow: {
     flexDirection: 'row',
